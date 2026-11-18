@@ -7,7 +7,7 @@ from pathlib import Path
 from time import perf_counter_ns
 
 EPSILON = 1e-9
-REPEATS = 100
+REPEATS = 10
 SIZES = (5, 13, 25)
 DATA_PATH = Path(__file__).with_name("data.json")
 LABELS = {"+": "Cross", "cross": "Cross", "x": "X"}
@@ -33,13 +33,14 @@ def read_matrix(name):
             if len(row) != 3 or not all(map(math.isfinite, row)):
                 raise ValueError
         except ValueError:
-            print("입력 형식 오류. 각 줄에 유한한 숫자 3개를 공백으로 구분해 입력하세요.")
+            print("입력 형식 오류. 각 줄에 유한한 숫자 3개를 공백으로 구분해 입력하세요. 예: 0 1 0")
             continue
         matrix.append(row)
     return matrix
 
 
 def mac(pattern, kernel):
+    """같은 위치의 곱을 누적한다. 필터 하나당 N²번 계산한다."""
     total = 0
     for pattern_row, kernel_row in zip(pattern, kernel):
         for value, weight in zip(pattern_row, kernel_row):
@@ -56,6 +57,7 @@ def classify(first, second, first_label, second_label):
 
 
 def normalize(label):
+    """필터 키와 기대값에 같은 규칙을 적용하고 별칭은 LABELS 한곳에서 관리한다."""
     if isinstance(label, str):
         standard = LABELS.get(label.strip().lower())
         if standard:
@@ -80,6 +82,7 @@ def manual_mode():
     print(f"필터 A, B를 각각 3×3으로 저장했습니다. A={first}, B={second}")
     pattern = read_matrix("입력 패턴")
     started = perf_counter_ns()
+    # 두 필터의 MAC 호출만 측정한다. 총 2N²번이며 판정과 출력은 측정 밖이다.
     score_a = mac(pattern, first)
     score_b = mac(pattern, second)
     elapsed_ms = (perf_counter_ns() - started) / 1_000_000
@@ -103,7 +106,9 @@ def case_result(key, case, filters):
     size = int(match[1])
     case = require_object(case, key)
     group_key = f"size_{size}"
-    group = require_object(filters.get(group_key), group_key)
+    if group_key not in filters:
+        raise ValueError(f"{group_key} 필터 그룹이 없습니다.")
+    group = require_object(filters[group_key], group_key)
     kernels = {}
     for label, matrix in group.items():
         standard = normalize(label)
@@ -123,7 +128,13 @@ def case_result(key, case, filters):
 
 
 def json_mode(path):
-    data = require_object(json.loads(path.read_text(encoding="utf-8-sig")), "최상위 값")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{path.name}을 UTF-8로 저장하세요.") from error
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{path.name} JSON 문법 오류 ({error.lineno}행 {error.colno}열): {error.msg}") from error
+    data = require_object(data, "최상위 값")
     patterns = require_object(data.get("patterns"), "patterns")
     filters = data.get("filters")
     failures = []
